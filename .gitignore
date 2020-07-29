@@ -304,3 +304,10 @@ __pycache__/
 
 # Photon firmware
 **/photon*firmware*.bin
+
+# lib directory
+**/FindyBot/lib/
+Particle/FindyBot/.vscode/settings.json
+Particle/FindyBot/src/FindyBot.cpp
+.DS_Store
+.gitignore

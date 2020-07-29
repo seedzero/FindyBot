@@ -1,8 +1,7 @@
 /*
-* Project FindyBot3000
-* Description: Google Assistant + IFTTT + Particle Photon + MAGIC
-* Author: Dustin Dobransky
-* Date: 2019-01-22
+* FindyBot
+* 
+* Author: Dustin Dobransky, modifications by Keith Irvine
 */
 
 // Libraries
