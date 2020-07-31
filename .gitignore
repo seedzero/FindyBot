@@ -311,3 +311,13 @@ Particle/FindyBot/.vscode/settings.json
 Particle/FindyBot/src/FindyBot.cpp
 .DS_Store
 .gitignore
+Particle/FindyBot/target/1.5.2/argon/platform_user_ram.ld
+Particle/FindyBot/target/1.5.4-rc.1/argon/platform_user_ram.ld
+Particle/FindyBot/target/1.5.2/argon/FindyBot.bin
+Particle/FindyBot/target/1.5.2/argon/FindyBot.bin.crc_block
+Particle/FindyBot/target/1.5.2/argon/FindyBot.bin.no_crc
+Particle/FindyBot/target/1.5.2/argon/FindyBot.dfu
+Particle/FindyBot/target/1.5.2/argon/FindyBot.elf
+Particle/FindyBot/target/1.5.2/argon/FindyBot.hex
+Particle/FindyBot/target/1.5.2/argon/FindyBot.lst
+Particle/FindyBot/target/1.5.2/argon/FindyBot.map

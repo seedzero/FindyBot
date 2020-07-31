@@ -26,7 +26,7 @@
 #define ON true
 #define OFF false
 
-StaticJsonBuffer<3000> jsonBuffer;
+StaticJsonDocument<3000> doc;
 
 const PROGMEM unsigned char fire[] = {
   0B00010000,
@@ -153,21 +153,29 @@ bool enableRainbowLeds = false;
 void googleAssistantEventHandler(const char *event, const char *data);
 
 // Webhook response handler function prototypes
-void azureFunctionEventResponseHandler(const char *event, const char *data);
+void serverFunctionEventResponseHandler(const char *event, const char *data);
+
+// Networking
+TCPClient client;
+IPAddress server_ip(10, 0, 39, 46);
+int port = 9999;
+static uint8_t buffer[256];
+
+bool enableServer = true;
 
 // Program
 void setup()
 {
   Serial.begin();
-  Serial.println("FindyBot3000");
+  Serial.println("FindyBot");
 
   // Handle incoming Google Assistant commands, via IFTTT
-  Particle.subscribe("Google_", googleAssistantEventHandler);
+  Particle.subscribe("Google_", googleAssistantEventHandler, MY_DEVICES);
 
   // Handle Azure Function web hook response
-  Particle.subscribe("hook-response/callAzureFunctionEvent", azureFunctionEventResponseHandler, MY_DEVICES);
+  Particle.subscribe("hook-response/callServerFunctionEvent", serverFunctionEventResponseHandler, MY_DEVICES);
 
-  // Start FindyBot3000 with the display off
+  // Start FindyBot with the display off
   pinMode(POWER_SUPPLY_RELAY_PIN, OUTPUT);
   digitalWrite(POWER_SUPPLY_RELAY_PIN, OFF);
   delay(1000);
@@ -190,6 +198,19 @@ void loop()
   if (enableLightAllBoxes) lightBoxes();
   if (enableTextScrolling) scrollDisplay();
   if (enableRainbowLeds)   rainbowLeds();
+
+  if (client.connected()) {
+  while (client.available()){
+    Serial.printlnf("bytes available : %d", client.available());
+    std::fill_n(buffer, 256, 0);
+    client.read(buffer, client.available());
+    Serial.printlnf("%s", buffer);
+    }
+  }
+  else {
+    Serial.printlnf("Connecting to server...");
+    client.connect(server_ip, port);
+  }
 }
 
 // weight = 0 -> col0, weight = 0.5 -> 50/50 col0/col1, weight = 1 -> col1
@@ -316,7 +337,7 @@ struct CommandHandler
   void (*handle) (const char* data);
 };
 
-// Requires AzureFunction
+// Requires AzureFunction or FindyBot Server
 const char* FindItem = "FindItem";
 const char* FindTags = "FindTags";
 const char* InsertItem = "InsertItem";
@@ -374,7 +395,7 @@ void googleAssistantEventHandler(const char* event, const char* data)
   }
 }
 
-void callAzureFunction(const char* command, const char* payload, bool isJson = false)
+void callServerFunction(const char* command, const char* payload, bool isJson = false)
 {
   char jsonData[255];
   if (isJson) {
@@ -387,59 +408,64 @@ void callAzureFunction(const char* command, const char* payload, bool isJson = f
   // This event is tied to a webhook created in Particle Console
   // https://console.particle.io/integrations
   // The webhook calls an Azure Function, passing along with it a json payload eh
-  Particle.publish("callAzureFunctionEvent", jsonData, PRIVATE);
+  if (enableServer == true){
+    client.print(jsonData);   
+  }
+  else if (enableServer == false){
+    Particle.publish("callServerFunctionEvent", jsonData, PRIVATE);
+  }
 }
 
 /* ============= GOOGLE ASSISTANT EVENT HANDLERS ============= */
 
 void findItem(const char *data)
 {
-  callAzureFunction(FindItem, data);
+  callServerFunction(FindItem, data);
 }
 
 void findTags(const char *data)
 {
-  callAzureFunction(FindTags, data);
+  callServerFunction(FindTags, data);
 }
 
 void insertItem(const char *data)
 {
-  callAzureFunction(InsertItem, data, true);
+  callServerFunction(InsertItem, data, true);
 }
 
 void removeItem(const char *data)
 {
-  callAzureFunction(RemoveItem, data);
+  callServerFunction(RemoveItem, data);
 }
 
 void addTags(const char *data)
 {
-  callAzureFunction(AddTags, data);
+  callServerFunction(AddTags, data);
 }
 
 void setQuantity(const char *data)
 {
-  callAzureFunction(SetQuantity, data, true);
+  callServerFunction(SetQuantity, data, true);
 }
 
 void updateQuantity(const char *data)
 {
-  callAzureFunction(UpdateQuantity, data, true);
+  callServerFunction(UpdateQuantity, data, true);
 }
 
 void showAllBoxes(const char *data)
 {
-  callAzureFunction(ShowAllBoxes, data);
+  callServerFunction(ShowAllBoxes, data);
 }
 
 void bundleWith(const char *data)
 {
-  callAzureFunction(BundleWith, data, true);
+  callServerFunction(BundleWith, data, true);
 }
 
 void howMany(const char *data)
 {
-  callAzureFunction(HowMany, data);
+  callServerFunction(HowMany, data);
 }
 
 void changeColors(const char *data)
@@ -547,7 +573,7 @@ void setStateFromText(bool& variable, const char *onOffText)
 struct ResponseHandler
 {
   const char* command;
-  void (*handle) (JsonObject& response);
+  void (*handle) (JsonObject response);
 };
 
 const ResponseHandler responseHandlers[] =
@@ -567,9 +593,9 @@ const ResponseHandler responseHandlers[] =
 
 char msg[600];
 // This function handles the webhook-response from the Azure Function
-void azureFunctionEventResponseHandler(const char *event, const char *data)
+void serverFunctionEventResponseHandler(const char *event, const char *data)
 {
-  Serial.printlnf("azureFunctionEventResponseHandler\nevent: %s\ndata: %s", event, data);
+  Serial.printlnf("serverFunctionEventResponseHandler\nevent: %s\ndata: %s", event, data);
   if (data == NULL) return;
 
   // remove all backslashes ('\') added by particle webhook-response
@@ -588,22 +614,24 @@ void azureFunctionEventResponseHandler(const char *event, const char *data)
   Serial.println(strlen(msg));
   Serial.println("------------------------------------");
 
-  jsonBuffer.clear(); // Aha! This is what I needed to fix multiple FindItem calls.
-  JsonObject& responseJson = jsonBuffer.parseObject(msg);
-
-  if (!responseJson.success()) {
+  // jsonBuffer.clear(); // Aha! This is what I needed to fix multiple FindItem calls.
+  // JsonObject responseJson = jsonBuffer.parseObject(msg);
+  DeserializationError error = deserializeJson(doc, msg);
+  Serial.println("doc: ");
+  
+  if (error) {
     Serial.println("Parsing JSON failed");
     return;
   }
 
-  const char* cmd = responseJson["Command"];
+  const char* cmd = doc["Command"];
 
-  Serial.print("Command: ");
+  Serial.println("Command: ");
   Serial.println(cmd);
 
   for (ResponseHandler responseHandler : responseHandlers) {
     if (strcmp(cmd, responseHandler.command) == 0) {
-      responseHandler.handle(responseJson);
+      responseHandler.handle(doc.to<JsonObject>());
       break;
     }
   }
@@ -613,14 +641,14 @@ int sRow, sCol;
 uint16_t sColor;
 bool sSet = false;
 
-void findItemResponseHandler(JsonObject& json)
+void findItemResponseHandler(JsonObject json)
 {
   int count = json["Count"];
   if (count <= 0) {
     Serial.println("Item not found");
     dispayItemNotFound();
   } else {
-    JsonObject& result = json["Result"][0];
+    JsonObject result = json["Result"][0];
 
     const char* item = result["Name"];
     int quantity = result["Quantity"];
@@ -645,7 +673,7 @@ void findItemResponseHandler(JsonObject& json)
   }
 }
 
-void findTagsResponseHandler(JsonObject& json)
+void findTagsResponseHandler(JsonObject json)
 {
   const char* cmd = json["Command"];
   int count = json["Count"];
@@ -656,7 +684,7 @@ void findTagsResponseHandler(JsonObject& json)
     return;
   }
 
-  JsonArray& items = json["Result"];
+  JsonArray items = json["Result"];
 
   setDisplay(ON);
   matrix.fillScreen(0);
@@ -664,7 +692,7 @@ void findTagsResponseHandler(JsonObject& json)
   for (int i = 0; i < count; i++)
   {
      //const char* name = items[i]["Name"];
-     JsonArray& info = items[i];
+     JsonArray info = items[i];
      int row = info[0];
      int col = info[1];
      float confidence = ((float)info[2])/numTags;
@@ -689,7 +717,7 @@ float normalize(float value, float start, float end)
     return (value - start) / (end - start);
 }
 
-void insertItemResponseHandler(JsonObject& json)
+void insertItemResponseHandler(JsonObject json)
 {
   bool success = json["Success"];
 
@@ -708,7 +736,7 @@ void insertItemResponseHandler(JsonObject& json)
   Serial.printlnf("row: %d, col: %d", row, col);
 }
 
-void removeItemResponseHandler(JsonObject& json)
+void removeItemResponseHandler(JsonObject json)
 {
   Serial.println("removeItemResponseHandler");
 
@@ -718,7 +746,7 @@ void removeItemResponseHandler(JsonObject& json)
   }
 }
 
-void addTagsResponseHandler(JsonObject& json)
+void addTagsResponseHandler(JsonObject json)
 {
   Serial.println("addTagsResponseHandler");
 
@@ -729,7 +757,7 @@ void addTagsResponseHandler(JsonObject& json)
 }
 
 // Modifying quantity triggers FindItem response handler
-void setQuantityResponseHandler(JsonObject& json)
+void setQuantityResponseHandler(JsonObject json)
 {
   Serial.println("setQuantityResponseHandler");
 
@@ -738,7 +766,7 @@ void setQuantityResponseHandler(JsonObject& json)
     return;
   }
 
-  JsonObject& result = json["Result"][0];
+  JsonObject result = json["Result"][0];
   int row = result["Row"];
   int col = result["Col"];
 
@@ -749,7 +777,7 @@ void setQuantityResponseHandler(JsonObject& json)
   Serial.printlnf("row: %d, col: %d", row, col);
 }
 
-void updateQuantityResponseHandler(JsonObject& json)
+void updateQuantityResponseHandler(JsonObject json)
 {
   Serial.println("updateQuantityResponseHandler");
 
@@ -758,7 +786,7 @@ void updateQuantityResponseHandler(JsonObject& json)
     return;
   }
 
-  JsonObject& result = json["Result"][0];
+  JsonObject result = json["Result"][0];
   int row = result["Row"];
   int col = result["Col"];
 
@@ -769,7 +797,7 @@ void updateQuantityResponseHandler(JsonObject& json)
   Serial.printlnf("row: %d, col: %d", row, col);
 }
 
-void showAllBoxesResponseHandler(JsonObject& json)
+void showAllBoxesResponseHandler(JsonObject json)
 {
   Serial.println("showAllBoxesResponseHandler");
 
@@ -796,7 +824,7 @@ void showAllBoxesResponseHandler(JsonObject& json)
   matrix.show();
 }
 
-void bundleWithResponseHandler(JsonObject& json)
+void bundleWithResponseHandler(JsonObject json)
 {
   Serial.println("bundleWithResponseHandler");
 
@@ -819,7 +847,7 @@ void bundleWithResponseHandler(JsonObject& json)
   Serial.printlnf("NewItem: %s, row: %d, col: %d, quantity: %d, ExistingItem: %s", newItem, row, col, quantity, existingItem);
 }
 
-void howManyResponseHandler(JsonObject& json)
+void howManyResponseHandler(JsonObject json)
 {
   Serial.println("howManyResponseHandler");
 
@@ -839,7 +867,7 @@ void howManyResponseHandler(JsonObject& json)
   matrix.show();
 }
 
-void unknownCommandResponseHandler(JsonObject& json)
+void unknownCommandResponseHandler(JsonObject json)
 {
   Serial.println("unknownCommandResponseHandler");
   const char* unknownCmd = json["Command"];
